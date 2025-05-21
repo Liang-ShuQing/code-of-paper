@@ -2,7 +2,7 @@ rm(list=ls())
 options(digits=6)
 set.seed(123456789)
 library(Matrix)
-K=3;S=50
+K=3;S=100
 p=2
 beta.turekh1=matrix(c(0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0), ncol=1)  
 beta.turekh2=matrix(c(0,0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0),ncol=1)
