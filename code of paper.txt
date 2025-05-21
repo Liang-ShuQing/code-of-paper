@@ -1,0 +1,1106 @@
+rm(list=ls())
+options(digits=6)
+set.seed(123456789)
+library(Matrix)
+K=3;S=50
+p=2
+beta.turekh1=matrix(c(0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0), ncol=1)  
+beta.turekh2=matrix(c(0,0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0),ncol=1)
+L=length(beta.turekh1);dis.err="MN"
+sigmafang_b0=matrix(c(1,1,1,1),p,p)
+sigmafang_b_init=diag(rep(1,p))
+Length_chain=10000
+burn.in=4000
+step=1
+sample_size=6000
+rho=0
+N=15
+m=5 #个体测量重复次数
+n=N*m
+#########################################################################
+
+options(digits=6)
+set.seed(123456789)
+#############################################
+#这一步的作用是给定后面的初值
+alph=function(k)#这个参数是误差项的分位数
+{ alpha0=matrix(0,k,1)#第一个是元素，第二个是行，第三个是列
+
+if (k==1)
+{alpha0=0 }
+else 
+{  for (i in 1:k)
+{
+  alpha0[i]=-10+(i-1)*20/(k-1)
+}
+}
+alpha0
+}
+#############################################
+tau_vector=function(q)#此函数用于设置分位点
+{tau_ans=rep(0,q)
+for (i in 1:q)
+{
+  tau_ans[i]=i/(q+1)
+}
+tau_ans
+}
+#############################################
+Datagen=function(N,m,L,beta.turekh1,beta.turekh2,Sigma_b0,dis.err,tau)
+{ 
+  #固定效应协方差阵参数
+  R=diag(1,L,L) 
+  for (i in 1:L)
+  {
+    for ( j in 1:L)
+    { R[i,j]=rho^abs(i-j) }
+  }
+  beta.true=matrix(0,p,L)     
+  beta.true[1,]=beta.turekh1 
+  beta.true[2,]=beta.turekh2
+  X=array(0,dim=c(N,m,L)) 
+  b=matrix(0,p,N)
+  Y=array(0,dim=c(N,m,p))  
+  EPS=array(0,dim=c(N,m,p))  
+  if (dis.err!="MN" & dis.err!="MT"& dis.err!="ML" )
+  {
+    print("The inputted error distribution is not correct")
+    break
+  }
+  else
+  {
+    if (dis.err=="MN")
+    {　for (i in 1:N)
+    {  for (t in 1:m)
+    {  EPS[i,t,]=mvrnorm(1,rep(0,p),Sigma=matrix(c(1,0.36,0.36,1),2,2)) }
+    }
+      
+    }
+    if (dis.err=="MT")
+    { for (i in 1:N)
+    { for (t in 1:m)
+    {  EPS[i,t,]=rmvt(1,rep(0,p),S=matrix(c(1,0.36,0.36,1),2,2),df=3) }
+    } 
+      
+    }
+    if (dis.err=="ML")
+    {　for (i in 1:N)
+    {  for (t in 1:m)
+    { G=rexp(1,rate=1)
+    EPS[i,t,]=mvrnorm(1, rep(0,p),G*matrix(c(1,0.36,0.36,1),2,2) )
+    }
+    }
+    }   
+  }  
+  for (j in 1:p){
+    for ( i in 1:N)
+    { EPS[i,,j]=EPS[i,,j]-mean(EPS[,,j])
+    }}
+  for (i in 1:N)
+  { 
+    b[,i]=mvrnorm(1,rep(0,p),sigmafang_b0)
+    for (t in 1:m)
+    { 
+      #X[i,t,1]=rbinom(1, size = 1, prob = 0.5)
+      X[i,t,1:L]=matrix(mvrnorm(1,rep(0,L),Sigma=R),ncol=1)
+      Y[i,t,]=beta.true%*%X[i,t,]+b[,i]+EPS[i,t,]     
+    }                                           
+  } 
+  
+  dat=list(Ykh1=Y[,,1],Ykh2=Y[,,2],X=X)
+  return(dat)
+}
+
+#############################################################
+############################################################# 小循环，MCMC
+CBayesQR=function(Ykh1,Ykh2,X,tau,prior,init_value) 
+{
+  theta1kkh1=(1-2*tau)/(tau*(1-tau))
+  theta1kkh2=(1-2*tau)/(tau*(1-tau))
+  theta2kkh1=2/(tau*(1-tau))
+  theta2kkh2=2/(tau*(1-tau))
+  #init_value是各个参数的初值，是个list
+  #init_value=list (V=V_init,beta=beta_init,b=b_init,sigma=sigma_init,Sigma_b=Sigma_b_init,alpha=alpha_init)
+  Vkh1=init_value$Vkh1
+  Vkh2=init_value$Vkh2
+  b=init_value$b
+  bkh1=b[1,]
+  bkh2=b[2,]
+  alphakh1=init_value$alphakh1
+  alphakh2=init_value$alphakh2
+  betakh1=init_value$betakh1
+  betakh2=init_value$betakh2
+  sigmakh1=init_value$sigmakh1
+  sigmakh2=init_value$sigmakh2
+  #sigmafang_b=init_value$sigmafang_b
+  Hkh1=init_value$Hkh1
+  Hkh2=init_value$Hkh2
+  lambdakh1=init_value$lambdakh1
+  lambdakh2=init_value$lambdakh2
+  Sigma_b=init_value$Sigma_b
+  
+  
+  q=2#bi的维数
+  ############################## undate betakh1
+  beta_newkh1=matrix(0,L,1)
+  for (h in 1:L)
+  { mmuu=0
+  sigmaaa=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  { 
+    
+    re11=Ykh1[i,j]-X[i,j,-h]%*%betakh1[-h]-bkh1[i]-theta1kkh1[k]*Vkh1[i,j,k]-alphakh1[k]
+    mmuu=mmuu+X[i,j,h]*re11/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+    sigmaaa=sigmaaa+X[i,j,h]^2/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+  }
+  }
+  }
+  sigmaaaa=1/sigmaaa
+  mmuuu=sigmaaaa*mmuu
+  beta_newkh1[h]=rtnorm(1,mmuuu,sqrt(sigmaaaa),-Hkh1[h],Hkh1[h]) 
+  }
+  betakh1=beta_newkh1 
+  
+  ############################## undate betakh2
+  beta_newkh2=matrix(0,L,1)
+  for (h in 1:L)
+  { mmuu=0
+  sigmaaa=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  { 
+    
+    re11=Ykh2[i,j]-X[i,j,-h]%*%betakh2[-h]-bkh2[i]-theta1kkh2[k]*Vkh2[i,j,k]-alphakh2[k]
+    mmuu=mmuu+X[i,j,h]*re11/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+    sigmaaa=sigmaaa+X[i,j,h]^2/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+  }
+  }
+  }
+  sigmaaaa=1/sigmaaa
+  mmuuu=sigmaaaa*mmuu
+  beta_newkh2[h]=rtnorm(1,mmuuu,sqrt(sigmaaaa),-Hkh2[h],Hkh2[h]) 
+  }
+  betakh2=beta_newkh2
+  ############################### update sigmakh1
+  C0kh1=3*n/2+prior$c0kh1
+  sigma_newkh1=sigmakh1#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  for (k in 1:K)
+  { rekh1=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {
+    rekh1=rekh1+(Ykh1[i,j]-alphakh1[k]-X[i,j,]%*%betakh1-bkh1[i]-theta1kkh1[k]*Vkh1[i,j,k])^2/(2*theta2kkh1[k] *Vkh1[i,j,k])+Vkh1[i,j,k]
+  }
+  }
+  D0kh1=rekh1+prior$d0kh1
+  sigma_newkh1[k]=rigamma(1,C0kh1,D0kh1)
+  if (is.na(sigma_newkh1[k]))
+  {sigma_newkh1[k]=sigmakh1[k]}
+  if (sigma_newkh1[k]<0.001)
+  {sigma_newkh1[k]=0.001}
+  }
+  sigmakh1=sigma_newkh1
+  
+  ############################### update sigmakh2
+  C0kh2=3*n/2+prior$c0kh2
+  sigma_newkh2=sigmakh2#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  for (k in 1:K)
+  { rekh2=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {
+    rekh2=rekh2+(Ykh2[i,j]-alphakh2[k]-X[i,j,]%*%betakh2-bkh2[i]-theta1kkh2[k]*Vkh2[i,j,k])^2/(2*theta2kkh2[k] *Vkh2[i,j,k])+Vkh2[i,j,k]
+  }
+  }
+  D0kh2=rekh2+prior$d0kh2
+  sigma_newkh2[k]=rigamma(1,C0kh2,D0kh2)
+  if (is.na(sigma_newkh2[k]))
+  {sigma_newkh2[k]=sigmakh2[k]}
+  if (sigma_newkh2[k]<0.001)
+  {sigma_newkh2[k]=0.001}
+  }
+  sigmakh2=sigma_newkh2
+  
+  
+  ##############################  update Sigma_b
+  degree_b=N+prior$mb
+  par_matrix_b=matrix(0,q,q)
+  for (i in 1:N)
+  {
+    par_matrix_b=par_matrix_b+b[,i]%*%t(b[,i])
+  }
+  par_matrix_b=par_matrix_b+prior$Phi_b_joint
+  sigmafang_b_new=riwish(degree_b,par_matrix_b)
+  round(sigmafang_b_new,6)
+  Sigma_b=sigmafang_b_new
+  
+  ############################  update Vkh1
+  phikh1=(theta1kkh1^2+2*theta2kkh1)/(theta2kkh1*sigmakh1)
+  V_newkh1=Vkh1
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  { chisqkh1=(Ykh1[i,j]-alphakh1[k]-X[i,j,]%*%betakh1-bkh1[i])^2/(theta2kkh1[k]*sigmakh1[k])
+  V_newkh1[i,j,k]=rgig(1,lambda=1/2,chi=chisqkh1,psi=phikh1[k])
+  if  (V_newkh1[i,j,k]<0.001)
+  { V_newkh1[i,j,k]=0.001 }
+  }
+  }
+  }
+  Vkh1=V_newkh1
+  
+  ############################  update Vkh2
+  phikh2=(theta1kkh2^2+2*theta2kkh2)/(theta2kkh2*sigmakh2)
+  V_newkh2=Vkh2
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  { chisqkh2=(Ykh2[i,j]-alphakh2[k]-X[i,j,]%*%betakh2-bkh2[i])^2/(theta2kkh2[k]*sigmakh2[k])
+  V_newkh2[i,j,k]=rgig(1,lambda=1/2,chi=chisqkh2,psi=phikh2[k])
+  if  (V_newkh2[i,j,k]<0.001)
+  { V_newkh2[i,j,k]=0.001 }
+  }
+  }
+  }
+  Vkh2=V_newkh2
+  
+  ###########################  update b
+  b_new=b
+  for (i in 1:N) {
+    mu_b <- matrix(0, q, 1)
+    Sigmab <- matrix(0, q, q)
+    Sigmabkh1=Sigmabkh2=mu_bkh1=mu_bkh2=0
+    for (j in 1:m) {
+      for (k in 1:K) {
+        re4kh1 <- Ykh1[i, j] - alphakh1[k] - X[i, j, ] %*% betakh1 - theta1kkh1[k] * Vkh1[i, j, k]
+        Sigmabkh1 <- Sigmabkh1 + 1 / (theta2kkh1[k] * sigmakh1[k] * Vkh1[i, j, k])
+        mu_bkh1 <- mu_bkh1 + re4kh1 / (theta2kkh1[k] * sigmakh1[k] * Vkh1[i, j, k])
+      }
+    }
+    
+    for (j in 1:m) {
+      for (k in 1:K) {
+        re4kh2 <- Ykh2[i, j] - alphakh2[k] - X[i, j, ] %*% betakh2 - theta1kkh2[k] * Vkh2[i, j, k]
+        Sigmabkh2 <- Sigmabkh2 + 1 / (theta2kkh2[k] * sigmakh2[k] * Vkh2[i, j, k])
+        mu_bkh2 <- mu_bkh2 + re4kh2 / (theta2kkh2[k] * sigmakh2[k] * Vkh2[i, j, k])
+      }
+    }
+    
+    Sigmab=ginv(diag(c(Sigmabkh1,Sigmabkh2))+ginv(Sigma_b))
+    mu_b=Sigmab%*%matrix(c(mu_bkh1,mu_bkh2),2,1)
+    b_new[,i]=mvrnorm(1,mu_b,Sigmab)
+  }
+  
+  b <- b_new
+  ###########################  update  alphakh1
+  alpha_newkh1=alphakh1
+  alp_varkh1=matrix(0,K,1)
+  alp_mukh1=matrix(0,K,1)
+  for (k in 1:K)
+  {  for (i in 1:N)
+  {
+    for (j in 1:m)
+    {
+      alp_varkh1[k]=alp_varkh1[k]+1/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+      alp_mukh1[k]=alp_mukh1[k]+(Ykh1[i,j]-X[i,j,]%*%betakh1-bkh1[i]-theta1kkh1[k]*Vkh1[i,j,k])/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+    }
+  }
+    var_alphakh1=1/(alp_varkh1[k]+1/prior$alpha0_varkh1[k])
+    mean_alphakh1=var_alphakh1*(alp_mukh1[k]+prior$alpha0kh1[k]/prior$alpha0_varkh1[k])
+    alpha_newkh1[k]=rnorm(1,mean=mean_alphakh1,sd=sqrt(var_alphakh1))
+  }
+  alphakh1=matrix(sort(alpha_newkh1),ncol=1)-mean(alpha_newkh1)
+  
+  ###########################  update  alphakh2
+  alpha_newkh2=alphakh2
+  alp_varkh2=matrix(0,K,1)
+  alp_mukh2=matrix(0,K,1)
+  for (k in 1:K)
+  {  for (i in 1:N)
+  {
+    for (j in 1:m)
+    {
+      alp_varkh2[k]=alp_varkh2[k]+1/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+      alp_mukh2[k]=alp_mukh2[k]+(Ykh2[i,j]-X[i,j,]%*%betakh2-bkh2[i]-theta1kkh2[k]*Vkh2[i,j,k])/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+    }
+  }
+    var_alphakh2=1/(alp_varkh2[k]+1/prior$alpha0_varkh2[k])
+    mean_alphakh2=var_alphakh2*(alp_mukh2[k]+prior$alpha0kh2[k]/prior$alpha0_varkh2[k])
+    alpha_newkh2[k]=rnorm(1,mean=mean_alphakh2,sd=sqrt(var_alphakh2))
+  }
+  alphakh2=matrix(sort(alpha_newkh2),ncol=1)-mean(alpha_newkh2)
+  ############################### update lambdakh1
+  for ( s in 1:L)
+  { lambdakh1[s]=rgamma(1,shape=2+prior$c0kh1,scale=1/(prior$d0kh1+Hkh1[s]) ) }
+  
+  ########################################## update Hkh1
+  H_newkh1=Hkh1
+  for (s in 1:L)
+  { H_newkh1[s]=rexp(1,rate=lambdakh1[s])+(abs(betakh1[s]))  
+  }
+  Hkh1=H_newkh1
+  ############################### update lambdakh2
+  for ( s in 1:L)
+  { lambdakh2[s]=rgamma(1,shape=2+prior$c0kh2,scale=1/(prior$d0kh2+Hkh2[s]) ) }
+  
+  ########################################## update Hkh2
+  H_newkh2=Hkh2
+  for (s in 1:L)
+  { H_newkh2[s]=rexp(1,rate=lambdakh2[s])+(abs(betakh2[s]))  
+  }
+  Hkh2=H_newkh2
+  
+  #############################更新完毕
+  return(list(lambdakh1=lambdakh1,Hkh1=Hkh1,lambdakh2=lambdakh2,Hkh2=Hkh2,Vkh1=Vkh1,b=b,alphakh1=alphakh1,betakh1=betakh1,sigmakh1=sigmakh1,Sigma_b=Sigma_b,Vkh2=Vkh2,alphakh2=alphakh2,betakh2=betakh2,sigmakh2=sigmakh2))
+}
+
+CBayesQRkh1=function(Ykh1,Ykh2,X,tau,prior,init_value) 
+{
+  theta1kkh1=(1-2*tau)/(tau*(1-tau))
+  theta2kkh1=2/(tau*(1-tau))
+  Vkh1=init_valuekh1$Vkh1
+  bkh1=init_valuekh1$bkh1
+  alphakh1=init_valuekh1$alphakh1
+  betakh1=init_valuekh1$betakh1
+  sigmakh1=init_valuekh1$sigmakh1
+  sigmafang_bkh1=init_valuekh1$sigmafang_bkh1
+  Hkh1=init_valuekh1$Hkh1
+  lambdakh1=init_valuekh1$lambdakh1
+  
+  q=1#bikh1和bikh2的维数
+  ############################## undate betakh1
+  beta_starkh1=matrix(0,L,1)
+  X_matrixkh1=matrix(0,L,L)
+  rekh1=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  {
+    rekh1=Ykh1[i,j]-bkh1[i]-theta1kkh1[k]*Vkh1[i,j,k]-alphakh1[k]
+    beta_starkh1=beta_starkh1+matrix(X[i,j,],ncol=1)%*%rekh1/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+    X_matrixkh1=X_matrixkh1+matrix(X[i,j,],ncol=1)%*%X[i,j,]/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+  }
+  }
+  }
+  B_starkh1=ginv(X_matrixkh1)
+  B_starkh1=(B_starkh1+t(B_starkh1))/2#保证矩阵对称,协方差矩阵必须对称
+  round(B_starkh1,6)
+  beat_starkh1=B_starkh1%*%beta_starkh1
+  beta_newkh1=matrix(rep(0,L),ncol=1)
+  for(s in 1:L){
+    beta_newkh1[s]=rtnorm(1,mean=beat_starkh1[s],sd=sqrt(B_starkh1[s,s]),-Hkh1[s],Hkh1[s])
+  }
+  betakh1=beta_newkh1
+  
+  
+  
+  ############################### update sigmakh1
+  C0kh1=3*n/2+prior$c0kh1
+  sigma_newkh1=sigmakh1#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  for (k in 1:K)
+  { rekh1=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {
+    rekh1=rekh1+(Ykh1[i,j]-alphakh1[k]-X[i,j,]%*%betakh1-bkh1[i]-theta1kkh1[k]*Vkh1[i,j,k])^2/(2*theta2kkh1[k] *Vkh1[i,j,k])+Vkh1[i,j,k]
+  }
+  }
+  D0kh1=rekh1+prior$d0kh1
+  sigma_newkh1[k]=rigamma(1,C0kh1,D0kh1)
+  if (is.na(sigma_newkh1[k]))
+  {sigma_newkh1[k]=sigmakh1[k]}
+  if (sigma_newkh1[k]<0.001)
+  {sigma_newkh1[k]=0.001}
+  }
+  sigmakh1=sigma_newkh1
+  
+  
+  ##############################  update sigmafang_bkh1
+  degree_b=N/2+prior$mb
+  par_matrix_b=matrix(0,q,q)
+  for (i in 1:N)
+  {
+    par_matrix_b=par_matrix_b+1/2*bkh1[i]^2
+  }
+  par_matrix_b=par_matrix_b+prior$Phi_b
+  sigmafang_b_new=rigamma(1,degree_b,par_matrix_b)
+  round(sigmafang_b_new,6)
+  sigmafang_bkh1=sigmafang_b_new
+  
+  
+  
+  
+  ############################  update Vkh1
+  phikh1=(theta1kkh1^2+2*theta2kkh1)/(theta2kkh1*sigmakh1)
+  V_newkh1=Vkh1
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  { chisqkh1=(Ykh1[i,j]-alphakh1[k]-X[i,j,]%*%betakh1-bkh1[i])^2/(theta2kkh1[k]*sigmakh1[k])
+  V_newkh1[i,j,k]=rgig(1,lambda=1/2,chi=chisqkh1,psi=phikh1[k])
+  if  (V_newkh1[i,j,k]<0.001)
+  { V_newkh1[i,j,k]=0.001 }
+  }
+  }
+  }
+  Vkh1=V_newkh1
+  
+  
+  ###########################  update bkh1
+  b_newkh1=bkh1
+  for (i in 1:N) {
+    mu_b <- matrix(0, q, 1)
+    Sigmab <- matrix(0, q, q)
+    Sigmabkh1=mu_bkh1=0
+    for (j in 1:m) {
+      for (k in 1:K) {
+        re4kh1 <- Ykh1[i, j] - alphakh1[k] - X[i, j, ] %*% betakh1 - theta1kkh1[k] * Vkh1[i, j, k]
+        Sigmabkh1 <- Sigmabkh1 + 1 / (theta2kkh1[k] * sigmakh1[k] * Vkh1[i, j, k])
+        mu_bkh1 <- mu_bkh1 + re4kh1 / (theta2kkh1[k] * sigmakh1[k] * Vkh1[i, j, k])
+      }
+    }
+    
+    
+    Sigmab=1/((Sigmabkh1)+1/sigmafang_bkh1)
+    mu_b=Sigmab*(mu_bkh1)
+    b_newkh1[i]=rnorm(1,mu_b,sqrt(Sigmab))
+  }
+  
+  bkh1 <- b_newkh1
+  
+  
+  ###########################  update  alphakh1
+  alpha_newkh1=alphakh1
+  alp_varkh1=matrix(0,K,1)
+  alp_mukh1=matrix(0,K,1)
+  for (k in 1:K)
+  {  for (i in 1:N)
+  {
+    for (j in 1:m)
+    {
+      alp_varkh1[k]=alp_varkh1[k]+1/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+      alp_mukh1[k]=alp_mukh1[k]+(Ykh1[i,j]-X[i,j,]%*%betakh1-bkh1[i]-theta1kkh1[k]*Vkh1[i,j,k])/(theta2kkh1[k]*sigmakh1[k]*Vkh1[i,j,k])
+    }
+  }
+    var_alphakh1=ginv(alp_varkh1[k]+1/prior$alpha0_varkh1[k])
+    mean_alphakh1=var_alphakh1*(alp_mukh1[k]+prior$alpha0kh1[k]/prior$alpha0_varkh1[k])
+    alpha_newkh1[k]=rnorm(1,mean=mean_alphakh1,sd=sqrt(var_alphakh1))
+  }
+  alphakh1=matrix(sort(alpha_newkh1),ncol=1)-mean(alpha_newkh1)
+  
+  
+  ############################### update lambdakh1
+  for ( s in 1:L)
+  { lambdakh1[s]=rgamma(1,shape=2+prior$c0kh1,scale=1/(prior$d0kh1+Hkh1[s]))  }
+  
+  ########################################## update Hkh1
+  H_newkh1=Hkh1
+  for (s in 1:L)
+  { H_newkh1[s]=rexp(1,rate=lambdakh1[s])+(abs(betakh1[s]))  
+  }
+  Hkh1=H_newkh1
+  
+  #############################更新完毕
+  return(list(lambdakh1=lambdakh1,Hkh1=Hkh1,Vkh1=Vkh1,bkh1=bkh1,alphakh1=alphakh1,betakh1=betakh1,sigmakh1=sigmakh1,sigmafang_bkh1=sigmafang_bkh1))
+}
+
+CBayesQRkh2=function(Ykh1,Ykh2,X,tau,prior,init_value) 
+{
+  theta1kkh2=(1-2*tau)/(tau*(1-tau))
+  theta2kkh2=2/(tau*(1-tau))
+  Vkh2=init_valuekh2$Vkh2
+  bkh2=init_valuekh2$bkh2
+  alphakh2=init_valuekh2$alphakh2
+  betakh2=init_valuekh2$betakh2
+  sigmakh2=init_valuekh2$sigmakh2
+  sigmafang_bkh2=init_valuekh2$sigmafang_bkh2
+  Hkh2=init_valuekh2$Hkh2
+  lambdakh2=init_valuekh2$lambdakh2
+  
+  q=1#bikh2和bikh2的维数
+  ############################## undate betakh2
+  beta_starkh2=matrix(0,L,1)
+  X_matrixkh2=matrix(0,L,L)
+  rekh2=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  {
+    rekh2=Ykh2[i,j]-bkh2[i]-theta1kkh2[k]*Vkh2[i,j,k]-alphakh2[k]
+    beta_starkh2=beta_starkh2+matrix(X[i,j,],ncol=1)%*%rekh2/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+    X_matrixkh2=X_matrixkh2+matrix(X[i,j,],ncol=1)%*%X[i,j,]/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+  }
+  }
+  }
+  B_starkh2=ginv(X_matrixkh2)
+  #############################保证矩阵对称,协方差矩阵必须对称
+  B_starkh2=(B_starkh2+t(B_starkh2))/2
+  round(B_starkh2,6)
+  beat_starkh2=B_starkh2%*%beta_starkh2
+  beta_newkh2=matrix(rep(0,L),ncol=1)
+  for(s in 1:L){
+    beta_newkh2[s]=rtnorm(1,mean=beat_starkh2[s],sd=sqrt(B_starkh2[s,s]),-Hkh2[s],Hkh2[s])
+  }
+  betakh2=beta_newkh2
+  
+  
+  
+  ############################### update sigmakh2
+  C0kh2=3*n/2+prior$c0kh2
+  sigma_newkh2=sigmakh2#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  for (k in 1:K)
+  { rekh2=0
+  for (i in 1:N)
+  { for (j in 1:m)
+  {
+    rekh2=rekh2+(Ykh2[i,j]-alphakh2[k]-X[i,j,]%*%betakh2-bkh2[i]-theta1kkh2[k]*Vkh2[i,j,k])^2/(2*theta2kkh2[k] *Vkh2[i,j,k])+Vkh2[i,j,k]
+  }
+  }
+  D0kh2=rekh2+prior$d0kh2
+  sigma_newkh2[k]=rigamma(1,C0kh2,D0kh2)
+  if (is.na(sigma_newkh2[k]))
+  {sigma_newkh2[k]=sigmakh2[k]}
+  if (sigma_newkh2[k]<0.001)
+  {sigma_newkh2[k]=0.001}
+  }
+  sigmakh2=sigma_newkh2
+  
+  
+  ##############################  update sigmafang_bkh2
+  degree_b=N/2+prior$mb
+  par_matrix_b=matrix(0,q,q)
+  for (i in 1:N)
+  {
+    par_matrix_b=par_matrix_b+1/2*bkh2[i]^2
+  }
+  par_matrix_b=par_matrix_b+prior$Phi_b
+  sigmafang_b_new=rigamma(1,degree_b,par_matrix_b)
+  round(sigmafang_b_new,6)
+  sigmafang_bkh2=sigmafang_b_new
+  
+  
+  
+  
+  ############################  update Vkh2
+  phikh2=(theta1kkh2^2+2*theta2kkh2)/(theta2kkh2*sigmakh2)
+  V_newkh2=Vkh2
+  for (i in 1:N)
+  { for (j in 1:m)
+  {  for (k in 1:K)
+  { chisqkh2=(Ykh2[i,j]-alphakh2[k]-X[i,j,]%*%betakh2-bkh2[i])^2/(theta2kkh2[k]*sigmakh2[k])
+  V_newkh2[i,j,k]=rgig(1,lambda=1/2,chi=chisqkh2,psi=phikh2[k])
+  if  (V_newkh2[i,j,k]<0.001)
+  { V_newkh2[i,j,k]=0.001 }
+  }
+  }
+  }
+  Vkh2=V_newkh2
+  
+  
+  ###########################  update bkh2
+  b_newkh2=bkh2
+  for (i in 1:N) {
+    mu_b <- matrix(0, q, 1)
+    Sigmab <- matrix(0, q, q)
+    Sigmabkh2=mu_bkh2=0
+    for (j in 1:m) {
+      for (k in 1:K) {
+        re4kh2 <- Ykh2[i, j] - alphakh2[k] - X[i, j, ] %*% betakh2 - theta1kkh2[k] * Vkh2[i, j, k]
+        Sigmabkh2 <- Sigmabkh2 + 1 / (theta2kkh2[k] * sigmakh2[k] * Vkh2[i, j, k])
+        mu_bkh2 <- mu_bkh2 + re4kh2 / (theta2kkh2[k] * sigmakh2[k] * Vkh2[i, j, k])
+      }
+    }
+    
+    
+    Sigmab=1/((Sigmabkh2)+1/sigmafang_bkh2)
+    mu_b=Sigmab*(mu_bkh2)
+    b_newkh2[i]=rnorm(1,mu_b,sqrt(Sigmab))
+  }
+  
+  bkh2 <- b_newkh2
+  
+  
+  ###########################  update  alphakh2
+  alpha_newkh2=alphakh2
+  alp_varkh2=matrix(0,K,1)
+  alp_mukh2=matrix(0,K,1)
+  for (k in 1:K)
+  {  for (i in 1:N)
+  {
+    for (j in 1:m)
+    {
+      alp_varkh2[k]=alp_varkh2[k]+1/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+      alp_mukh2[k]=alp_mukh2[k]+(Ykh2[i,j]-X[i,j,]%*%betakh2-bkh2[i]-theta1kkh2[k]*Vkh2[i,j,k])/(theta2kkh2[k]*sigmakh2[k]*Vkh2[i,j,k])
+    }
+  }
+    var_alphakh2=ginv(alp_varkh2[k]+1/prior$alpha0_varkh2[k])
+    mean_alphakh2=var_alphakh2*(alp_mukh2[k]+prior$alpha0kh2[k]/prior$alpha0_varkh2[k])
+    alpha_newkh2[k]=rnorm(1,mean=mean_alphakh2,sd=sqrt(var_alphakh2))
+  }
+  alphakh2=matrix(sort(alpha_newkh2),ncol=1)-mean(alpha_newkh2)
+  
+  
+  ############################### update lambdakh2
+  for ( s in 1:L)
+  { lambdakh2[s]=rgamma(1,shape=2+prior$c0kh2,scale=1/(prior$d0kh2+Hkh2[s]) ) }
+  
+  ########################################## update Hkh2
+  H_newkh2=Hkh2
+  for (s in 1:L)
+  { H_newkh2[s]=rexp(1,rate=lambdakh2[s])+(abs(betakh2[s]))  
+  }
+  Hkh2=H_newkh2
+  
+  #############################更新完毕
+  return(list(lambdakh2=lambdakh2,Hkh2=Hkh2,Vkh2=Vkh2,bkh2=bkh2,alphakh2=alphakh2,betakh2=betakh2,sigmakh2=sigmakh2,sigmafang_bkh2=sigmafang_bkh2))
+}
+library(MASS)
+library(coda)
+library(mvtnorm)
+library(quantreg)
+library(MCMCpack)
+library(truncnorm)
+library(pscl)
+library(ghyp)
+library(MASS)
+library(coda)
+library(msm)
+library(pglm)
+library(geepack)
+library(mvtnorm)
+library(mlbench)
+library(tmvtnorm)
+library(quantreg)
+library(LaplacesDemon)
+library(MCMCpack)
+library(truncnorm)
+library(pscl)
+library(ghyp)
+library(gamlss.dist)
+library(Matrix)
+library(foreach)
+library(glmnet)
+tau=tau_vector(K)  #分位数
+#############################################################
+#                          prior                            #
+#############################################################
+alpha0kh1=alph(K)
+alpha0_varkh1=rep(10^2,K)
+alpha0kh2=alph(K)
+alpha0_varkh2=rep(10^2,K)
+c0kh1=d0kh1=0.1
+c0kh2=d0kh2=0.1
+mb=3
+Phi_b_joint=diag(rep(1,p))
+Phi_b=1
+#各取所需
+prior=list(alpha0kh1=alpha0kh1,alpha0_varkh1=alpha0_varkh1,mb=mb,c0kh1=c0kh1,d0kh1=d0kh1,Phi_b_joint=Phi_b_joint,alpha0kh2=alpha0kh2,alpha0_varkh2=alpha0_varkh2,c0kh2=c0kh2,d0kh2=d0kh2)
+priorkh1=list(alpha0kh1=alpha0kh1,alpha0_varkh1=alpha0_varkh1,mb=mb,c0kh1=c0kh1,d0kh1=d0kh1,Phi_b=Phi_b)
+priorkh2=list(alpha0kh2=alpha0kh2,alpha0_varkh2=alpha0_varkh2,mb=mb,c0kh2=c0kh2,d0kh2=d0kh2,Phi_b=Phi_b)
+
+##
+
+beta_initkh1=matrix(-1,1,L)
+beta_initkh2=matrix(-1,1,L)
+
+alpha_initkh1=prior$alpha0kh1
+alpha_initkh2=prior$alpha0kh2
+sigma_initkh1=matrix(rep(1,K),ncol=1)
+sigma_initkh2=matrix(rep(1,K),ncol=1)
+
+lambda_initkh1=rep(1,L)
+lambda_initkh2=rep(1,L)
+H_initkh1=rep(1,L)
+H_initkh2=rep(1,L)
+Sigma_b_init=diag(rep(1,p))
+
+V_initkh1=array(0,c(N,m,K))
+for (k in 1:K)
+{ V_initkh1[,,k]=matrix(rEXP(N*m,sigma_initkh1[k]),N,m) }
+
+V_initkh2=array(0,c(N,m,K))
+for (k in 1:K)
+{ V_initkh2[,,k]=matrix(rEXP(N*m,sigma_initkh2[k]),N,m) }
+b_init_joint=matrix(rnorm(p*N,0,1),p,N)
+b_init=matrix(rnorm(N,0,1),1,N)
+#各取所需
+init_value=list (lambdakh1=lambda_initkh1,Hkh1=H_initkh1,lambdakh2=lambda_initkh2,Hkh2=H_initkh2,Vkh1=V_initkh1,betakh1=beta_initkh1,b=b_init_joint,sigmakh1=sigma_initkh1,Sigma_b=Sigma_b_init,alphakh1=alpha_initkh1,Vkh2=V_initkh2,betakh2=beta_initkh2,sigmakh2=sigma_initkh2,alphakh2=alpha_initkh2)
+init_valuekh1=list (lambdakh1=lambda_initkh1,Hkh1=H_initkh1,Vkh1=V_initkh1,betakh1=beta_initkh1,bkh1=b_init,sigmakh1=sigma_initkh1,sigmafang_bkh1=sigmafang_b_init,alphakh1=alpha_initkh1)
+init_valuekh2=list (lambdakh2=lambda_initkh2,Hkh2=H_initkh2,Vkh2=V_initkh2,betakh2=beta_initkh2,bkh2=b_init,sigmakh2=sigma_initkh2,sigmafang_bkh2=sigmafang_b_init,alphakh2=alpha_initkh2)
+
+
+##joint
+
+Sigma_b_simu=array(0,c(p,p,S,Length_chain))
+Sigma_b_simu0=array(0,c(p,p,S,Length_chain-burn.in))
+Sigma_b_simu1=array(0,c(p,p,S,sample_size))
+Sigma_b_simu2=array(0,c(p,p,S,sample_size))
+
+b_simu=array(0,c(p,N,S,Length_chain))
+b_simu0=array(0,c(p,N,S,Length_chain-burn.in))
+b_simu1=array(0,c(p,N,S,sample_size))
+
+
+Beta_simukh1=array(0,c(L,S,Length_chain))
+Beta_simu0kh1=array(0,c(L,S,Length_chain-burn.in))
+Beta_simu1kh1=array(0,c(L,S,sample_size))
+Beta_simukh2=array(0,c(L,S,Length_chain))
+Beta_simu0kh2=array(0,c(L,S,Length_chain-burn.in))
+Beta_simu1kh2=array(0,c(L,S,sample_size))
+Sigma_bmean=array(0,c(p,p,S))
+Sigma_bmean2=array(0,c(p,p,S))
+Betamean=array(0,c(p,L,S))
+Betameankh1=array(0,c(L,S))
+Betameankh2=array(0,c(L,S))
+beta.true=array(0,c(p,L))
+beta.true[1,]=beta.turekh1
+beta.true[2,]=beta.turekh2
+
+##single
+khBetamean=array(0,c(p,L,S))
+kh1Beta_simukh1=array(0,c(L,S,Length_chain))
+kh1Beta_simu0kh1=array(0,c(L,S,Length_chain-burn.in))
+kh1Beta_simu1kh1=array(0,c(L,S,sample_size))
+kh1Betameankh1=array(0,c(L,S))
+
+
+##single
+kh2Beta_simukh2=array(0,c(L,S,Length_chain))
+kh2Beta_simu0kh2=array(0,c(L,S,Length_chain-burn.in))
+kh2Beta_simu1kh2=array(0,c(L,S,sample_size))
+kh2Betameankh2=array(0,c(L,S))
+
+#CI
+
+Betalow=array(0,c(p,L,S))
+Betalowkh1=array(0,c(L,S))
+Betalowkh2=array(0,c(L,S))
+Betaup=array(0,c(p,L,S))
+Betaupkh1=array(0,c(L,S))
+Betaupkh2=array(0,c(L,S))
+
+#CIkh1 CIkh2
+Betalowsingle=array(0,c(p,L,S))
+Betalowsinglekh1=array(0,c(L,S))
+Betalowsinglekh2=array(0,c(L,S))
+Betaupsingle=array(0,c(p,L,S))
+Betaupsinglekh1=array(0,c(L,S))
+Betaupsinglekh2=array(0,c(L,S))
+################################################################产生初值
+################################################################产生数据
+################################################################开始循环
+APMSE=matrix(0,S,1)
+APMSE_single=matrix(0,S,1)
+for (s in 1:S){
+  print(s)
+  Dat=Datagen(N,m,L,beta.turekh1,beta.turekh2,Sigma_b0,dis.err,tau)
+  for (k in 1:Length_chain)
+  {#print(k)
+    ff=CBayesQR(Dat$Ykh1,Dat$Ykh2,Dat$X,tau,prior,init_value)
+    Sigma_b_simu[,,s,k]=ff$Sigma_b
+    b_simu[,,s,k]=ff$b
+    Beta_simukh1[,s,k]=ff$betakh1
+    Beta_simukh2[,s,k]=ff$betakh2
+    init_value=list(lambdakh1=ff$lambdakh1,Hkh1=ff$Hkh1,lambdakh2=ff$lambdakh2,Hkh2=ff$Hkh2,Vkh1=ff$Vkh1,betakh1=ff$betakh1,b=ff$b,sigmakh1=ff$sigmakh1,sigmafang_b=ff$sigmafang_b,alphakh1=ff$alphakh1,Vkh2=ff$Vkh2,betakh2=ff$betakh2,sigmakh2=ff$sigmakh2,alphakh2=ff$alphakh2)
+    
+    ffkh1=CBayesQRkh1(Dat$Ykh1,Dat$Ykh2,Dat$X,tau,priorkh1,init_valuekh1)
+    kh1Beta_simukh1[,s,k]=ffkh1$betakh1
+    init_valuekh1=list(lambdakh1=ffkh1$lambdakh1,Hkh1=ffkh1$Hkh1,Vkh1=ffkh1$Vkh1,betakh1=ffkh1$betakh1,bkh1=ffkh1$bkh1,sigmakh1=ffkh1$sigmakh1,sigmafang_bkh1=ffkh1$sigmafang_bkh1,alphakh1=ffkh1$alphakh1)
+    
+    ffkh2=CBayesQRkh2(Dat$Ykh1,Dat$Ykh2,Dat$X,tau,priorkh2,init_valuekh2)
+    kh2Beta_simukh2[,s,k]=ffkh2$betakh2
+    init_valuekh2=list(lambdakh2=ffkh2$lambdakh2,Hkh2=ffkh2$Hkh2,Vkh2=ffkh2$Vkh2,betakh2=ffkh2$betakh2,bkh2=ffkh2$bkh2,sigmakh2=ffkh2$sigmakh2,sigmafang_bkh2=ffkh2$sigmafang_bkh2,alphakh2=ffkh2$alphakh2)
+    
+  }
+  ##joint
+  Sigma_b_simu0[,,s,]=Sigma_b_simu[,,s,(burn.in+1):Length_chain]
+  b_simu0[,,s,]=b_simu[,,s,(burn.in+1):Length_chain]
+  
+  Beta_simu0kh1[,s,]=Beta_simukh1[,s,(burn.in+1):Length_chain]
+  Beta_simu0kh2[,s,]=Beta_simukh2[,s,(burn.in+1):Length_chain]
+  for (j in 1:sample_size)
+  {
+    Sigma_b_simu1[,,s,j]=Sigma_b_simu0[,,s,1+step*(j-1)]
+    b_simu1[,,s,j]=b_simu0[,,s,1+step*(j-1)]
+    
+    cov_matrix <- Sigma_b_simu1[,,s,j]
+    
+    # 计算标准差向量
+    std_dev <- sqrt(diag(cov_matrix))
+    
+    # 计算相关矩阵
+    corr_matrix <- cov_matrix / outer(std_dev, std_dev)
+    
+    Sigma_b_simu2[,,s,j]=corr_matrix
+    Beta_simu1kh1[,s,j]=Beta_simu0kh1[,s,1+step*(j-1)]
+    Beta_simu1kh2[,s,j]=Beta_simu0kh2[,s,1+step*(j-1)]
+  }
+  for(l in 1:sample_size){
+    
+    Sigma_bmean[,,s]=Sigma_bmean[,,s]+Sigma_b_simu1[,,s,l]
+    Sigma_bmean2[,,s]=Sigma_bmean2[,,s]+Sigma_b_simu2[,,s,l]
+    
+  }
+  Sigma_bmean[,,s]=Sigma_bmean[,,s]/sample_size
+  Sigma_bmean2[,,s]=Sigma_bmean2[,,s]/sample_size
+  
+  Betameankh1[,s]=apply(Beta_simu1kh1[,s,],1,mean)
+  Betameankh2[,s]=apply(Beta_simu1kh2[,s,],1,mean)
+  Betamean[1,,]=Betameankh1
+  Betamean[2,,]=Betameankh2
+  
+  ##
+  Betalowkh1[,s]=apply(Beta_simu1kh1[,s,],1,quantile,0.025)
+  Betaupkh1[,s]=apply(Beta_simu1kh1[,s,],1,quantile,0.975) 
+  Betalowkh2[,s]=apply(Beta_simu1kh2[,s,],1,quantile,0.025)
+  Betaupkh2[,s]=apply(Beta_simu1kh2[,s,],1,quantile,0.975) 
+  Betalow[1,,]=Betalowkh1
+  Betalow[2,,]=Betalowkh2
+  Betaup[1,,]=Betaupkh1
+  Betaup[2,,]=Betaupkh2
+  
+  for ( j in 1:p)
+  {APMSE[s]=APMSE[s]+t(Betamean[j,,s]-beta.true[j,])%*%(Betamean[j,,s]-beta.true[j,])
+  }
+  ##single
+  ##single（1）
+  kh1Beta_simu0kh1[,s,]=kh1Beta_simukh1[,s,(burn.in+1):Length_chain]
+  for (j in 1:sample_size)
+  {
+    kh1Beta_simu1kh1[,s,j]=kh1Beta_simu0kh1[,s,1+step*(j-1)]
+  }
+  kh1Betameankh1[,s]=apply(kh1Beta_simu1kh1[,s,],1,mean)
+  
+  ##single（2)
+  kh2Beta_simu0kh2[,s,]=kh2Beta_simukh2[,s,(burn.in+1):Length_chain]
+  for (j in 1:sample_size)
+  {
+    kh2Beta_simu1kh2[,s,j]=kh2Beta_simu0kh2[,s,1+step*(j-1)]
+  }
+  kh2Betameankh2[,s]=apply(kh2Beta_simu1kh2[,s,],1,mean)
+  
+  ##single(3)
+  khBetamean[1,,]=kh1Betameankh1
+  khBetamean[2,,]=kh2Betameankh2
+  
+  
+  ##
+  Betalowsinglekh1[,s]=apply(kh1Beta_simu1kh1[,s,],1,quantile,0.025)
+  Betaupsinglekh1[,s]=apply(kh1Beta_simu1kh1[,s,],1,quantile,0.975) 
+  Betalowsinglekh2[,s]=apply(kh2Beta_simu1kh2[,s,],1,quantile,0.025)
+  Betaupsinglekh2[,s]=apply(kh2Beta_simu1kh2[,s,],1,quantile,0.975) 
+  Betalowsingle[1,,]=Betalowsinglekh1
+  Betalowsingle[2,,]=Betalowsinglekh2
+  Betaupsingle[1,,]=Betaupsinglekh1
+  Betaupsingle[2,,]=Betaupsinglekh2
+  
+  for ( j in 1:p)
+  {APMSE_single[s]=APMSE_single[s]+t(khBetamean[j,,s]-beta.true[j,])%*%(khBetamean[j,,s]-beta.true[j,])
+  }
+  
+}
+
+##single
+beta_Biaskh1_single=apply(kh1Betameankh1,1,mean)-as.vector(beta.turekh1)
+beta_Rmsekh1_single=sqrt(apply(kh1Betameankh1,1,var)+beta_Biaskh1_single^2)
+beta_Biaskh2_single=apply(kh2Betameankh2,1,mean)-as.vector(beta.turekh2)
+beta_Rmsekh2_single=sqrt(apply(kh2Betameankh2,1,var)+beta_Biaskh2_single^2)
+MMAD_beta_single=mean(APMSE_single)
+Mstd_beta_single=sqrt(var(APMSE_single))
+
+
+
+
+##joint
+beta_Biaskh1_joint=apply(Betameankh1,1,mean)-as.vector(beta.turekh1)
+beta_Rmsekh1_joint=sqrt(apply(Betameankh1,1,var)+beta_Biaskh1_joint^2)
+beta_Biaskh2_joint=apply(Betameankh2,1,mean)-as.vector(beta.turekh2)
+beta_Rmsekh2_joint=sqrt(apply(Betameankh2,1,var)+beta_Biaskh2_joint^2)
+MMAD_beta_joint=mean(APMSE)
+Mstd_beta_joint=sqrt(var(APMSE))
+Sigma_b_Bias=matrix(0,p,p)
+Sigma_b_RMSE=matrix(0,p,p)
+Sigma_bmeanmean=matrix(0,p,p)
+for(b in 1:p){
+  for(c in 1:p){
+    Sigma_bmeanmean[b,c]=mean(Sigma_bmean[b,c,])
+    Sigma_b_Bias[b,c]=mean(Sigma_bmean[b,c,])-1
+    Sigma_b_RMSE[b,c]=sqrt(var(Sigma_bmean[b,c,])+(Sigma_b_Bias[b,c])^2)
+  }
+}
+
+Sigma_b_Bias2=matrix(0,p,p)
+Sigma_b_RMSE2=matrix(0,p,p)
+Sigma_bmeanmean2=matrix(0,p,p)
+for(b in 1:p){
+  for(c in 1:p){
+    Sigma_bmeanmean2[b,c]=mean(Sigma_bmean2[b,c,])
+    Sigma_b_Bias2[b,c]=mean(Sigma_bmean2[b,c,])-1
+    Sigma_b_RMSE2[b,c]=sqrt(var(Sigma_bmean2[b,c,])+(Sigma_b_Bias2[b,c])^2)
+  }
+}
+quantile(Sigma_bmean2[p-1,p,], probs = c(0.025,0.975))
+
+
+##single
+eps=0.1
+X_beta_single=matrix(0,2,L)
+ind_zero_beta_single=c(which(beta.true==0))
+ind_nonzero_beta_single=c(which(beta.true!=0))
+num1=num3=0
+for (s in 1:S)
+{ num1=num1+length(setdiff(c(which(abs(khBetamean[,,s])>eps)),ind_zero_beta_single))
+num3=num3+length(setdiff(c(which(abs(khBetamean[,,s])>eps)),ind_nonzero_beta_single))
+}
+#setdiff(A,B):将A中在B的扔掉，剩下的A。也就是A-A∩B
+for (j in 1:2)
+{ for (k in 1:L)
+{ if (beta.true[j,k]!=0)
+{ X_beta_single[j,k]=sum(as.numeric(abs(khBetamean[j,k,])>eps))}
+  else
+  { X_beta_single[j,k]=sum(as.numeric(abs(khBetamean[j,k,])<=eps))}
+}
+}
+
+Corr_beta_single=num1/S#把真值不是0的估计成超过阈值的每次bootstrap平均次数
+InCorr_beta_single=num3/S#把真值是0的估计成超过阈值的每次bootstrap平均次数
+
+result_beta_single=list(NC_beta_single=Corr_beta_single,NIC_beta_single=InCorr_beta_single)
+
+
+##joint
+eps=0.1
+X_beta_joint=matrix(0,2,L)
+ind_zero_beta_joint=c(which(beta.true==0))
+ind_nonzero_beta_joint=c(which(beta.true!=0))
+num1=num3=0
+for (s in 1:S)
+{ num1=num1+length(setdiff(c(which(abs(Betamean[,,s])>eps)),ind_zero_beta_joint))
+num3=num3+length(setdiff(c(which(abs(Betamean[,,s])>eps)),ind_nonzero_beta_joint))
+}
+#setdiff(A,B):将A中在B的扔掉，剩下的A。也就是A-A∩B
+for (j in 1:2)
+{ for (k in 1:L)
+{ if (beta.true[j,k]!=0)
+{ X_beta_joint[j,k]=sum(as.numeric(abs(Betamean[j,k,])>eps))}
+  else
+  { X_beta_joint[j,k]=sum(as.numeric(abs(Betamean[j,k,])<=eps))}
+}
+}
+
+Corr_beta_joint=num1/S#把真值不是0的估计成超过阈值的每次bootstrap平均次数
+InCorr_beta_joint=num3/S#把真值是0的估计成超过阈值的每次bootstrap平均次数
+result_beta_joint=list(NC_beta_joint=Corr_beta_joint,NIC_beta_joint=InCorr_beta_joint)
+#分量惩罚识别成功个数
+# X_betajoint=matrix(0,p,L)
+# for(i in 1:p){
+#   for (j in 1:L)
+#   { if (beta.true[i,j]!=0)
+#   { X_betajoint[i,j]=sum(as.numeric(abs(Betamean[i,j,])>eps))}
+#     else
+#     { X_betajoint[i]=sum(as.numeric(abs(Betamean[i,j,])<=eps))}
+#   }
+# }
+# X_betasingle=matrix(0,p,L)
+# for(i in 1:p){
+#   for (j in 1:L)
+#   { if (beta.true[i,j]!=0)
+#   { X_betasingle[i,j]=sum(as.numeric(abs(khBetamean[i,j,])>eps))}
+#     else
+#     { X_betasingle[i]=sum(as.numeric(abs(khBetamean[i,j,])<=eps))}
+#   }
+# }
+
+##CI(1)
+beta_low_kh1_joint=matrix(0,S,L)
+beta_up_kh1_joint=matrix(0,S,L)
+for(s in 1:S){
+  beta_low_kh1_joint[s,]=apply(Beta_simu1kh1[,s,],1,quantile,0.025)
+  beta_up_kh1_joint[s,]=apply(Beta_simu1kh1[,s,],1,quantile,0.975)
+}
+
+beta_low_kh1_joint_mean=apply(beta_low_kh1_joint,2,mean)
+beta_up_kh1_joint_mean=apply(beta_up_kh1_joint,2,mean)
+##CI(2)
+beta_low_kh2_joint=matrix(0,S,L)
+beta_up_kh2_joint=matrix(0,S,L)
+for(s in 1:S){
+  beta_low_kh2_joint[s,]=apply(Beta_simu1kh2[,s,],1,quantile,0.025)
+  beta_up_kh2_joint[s,]=apply(Beta_simu1kh2[,s,],1,quantile,0.975)
+}
+
+beta_low_kh2_joint_mean=apply(beta_low_kh2_joint,2,mean)
+beta_up_kh2_joint_mean=apply(beta_up_kh2_joint,2,mean)
+
+##CI(3)
+beta_low_kh1_single=matrix(0,S,L)
+beta_up_kh1_single=matrix(0,S,L)
+for(s in 1:S){
+  beta_low_kh1_single[s,]=apply(kh1Beta_simu1kh1[,s,],1,quantile,0.025)
+  beta_up_kh1_single[s,]=apply(kh1Beta_simu1kh1[,s,],1,quantile,0.975)
+}
+
+beta_low_kh1_single_mean=apply(beta_low_kh1_single,2,mean)
+beta_up_kh1_single_mean=apply(beta_up_kh1_single,2,mean)
+##CI(4)
+beta_low_kh2_single=matrix(0,S,L)
+beta_up_kh2_single=matrix(0,S,L)
+for(s in 1:S){
+  beta_low_kh2_single[s,]=apply(kh2Beta_simu1kh2[,s,],1,quantile,0.025)
+  beta_up_kh2_single[s,]=apply(kh2Beta_simu1kh2[,s,],1,quantile,0.975)
+}
+
+beta_low_kh2_single_mean=apply(beta_low_kh2_single,2,mean)
+beta_up_kh2_single_mean=apply(beta_up_kh2_single,2,mean)
+
+
+##Efficiency_joint
+beta_var_kh1_joint=matrix(0,S,L)
+beta_var_kh2_joint=matrix(0,S,L)
+for(s in 1:S){
+  beta_var_kh1_joint[s,]=apply(Beta_simu1kh1[,s,],1,var)
+  beta_var_kh2_joint[s,]=apply(Beta_simu1kh2[,s,],1,var)
+}
+
+beta_var_kh1_joint_mean=apply(beta_var_kh1_joint,2,mean)
+beta_var_kh2_joint_mean=apply(beta_var_kh2_joint,2,mean)
+
+##Efficiency_single
+beta_var_kh1_single=matrix(0,S,L)
+beta_var_kh2_single=matrix(0,S,L)
+for(s in 1:S){
+  beta_var_kh1_single[s,]=apply(kh1Beta_simu1kh1[,s,],1,var)
+  beta_var_kh2_single[s,]=apply(kh2Beta_simu1kh2[,s,],1,var)
+}
+
+beta_var_kh1_single_mean=apply(beta_var_kh1_single,2,mean)
+beta_var_kh2_single_mean=apply(beta_var_kh2_single,2,mean)
+
+#
+#结果1：潘建新论文评价准则
+round(beta_var_kh1_single_mean/beta_var_kh1_joint_mean,3)
+round(beta_var_kh2_single_mean/beta_var_kh2_joint_mean,3)
+#结果2:bias Rmse CI
+round(beta_Biaskh1_single,3)
+round(beta_Rmsekh1_single,3)
+round(beta_low_kh1_single_mean,3)
+round(beta_up_kh1_single_mean,3)
+round(beta_Biaskh2_single,3)
+round(beta_Rmsekh2_single,3)
+round(beta_low_kh2_single_mean,3)
+round(beta_up_kh2_single_mean,3)
+##joint
+round(beta_Biaskh1_joint,3)
+round(beta_Rmsekh1_joint,3)
+round(beta_low_kh1_joint_mean,3)
+round(beta_up_kh1_joint_mean,3)
+round(beta_Biaskh2_joint,3)
+round(beta_Rmsekh2_joint,3)
+round(beta_low_kh2_joint_mean,3)
+round(beta_up_kh2_joint_mean,3)
+#结果3：APMSE与惩罚识别率
+round(MMAD_beta_single,3);round(Mstd_beta_single,3);result_beta_single
+round(MMAD_beta_joint,3);round(Mstd_beta_joint,3);result_beta_joint
