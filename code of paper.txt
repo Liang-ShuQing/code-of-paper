@@ -2,29 +2,37 @@ rm(list=ls())
 options(digits=6)
 set.seed(123456789)
 library(Matrix)
-K=3;S=100
-p=2
-beta.turekh1=matrix(c(0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0), ncol=1)  
-beta.turekh2=matrix(c(0,0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0),ncol=1)
-L=length(beta.turekh1);dis.err="MN"
-sigmafang_b0=matrix(c(1,1,1,1),p,p)
-sigmafang_b_init=diag(rep(1,p))
-Length_chain=10000
-burn.in=4000
-step=1
-sample_size=6000
-rho=0
-N=15
-m=5 #个体测量重复次数
-n=N*m
-#########################################################################
+library(MASS)
+library(coda)
+library(mvtnorm)
+library(quantreg)
+library(MCMCpack)
+library(truncnorm)
+library(pscl)
+library(ghyp)
+library(MASS)
+library(coda)
+library(msm)
+library(pglm)
+library(geepack)
+library(mvtnorm)
+library(mlbench)
+library(tmvtnorm)
+library(quantreg)
+library(LaplacesDemon)
+library(MCMCpack)
+library(truncnorm)
+library(pscl)
+library(ghyp)
+library(gamlss.dist)
+library(Matrix)
+library(foreach)
+library(glmnet)
 
-options(digits=6)
-set.seed(123456789)
 #############################################
-#这一步的作用是给定后面的初值
-alph=function(k)#这个参数是误差项的分位数
-{ alpha0=matrix(0,k,1)#第一个是元素，第二个是行，第三个是列
+
+alph=function(k)
+{ alpha0=matrix(0,k,1)
 
 if (k==1)
 {alpha0=0 }
@@ -37,7 +45,7 @@ else
 alpha0
 }
 #############################################
-tau_vector=function(q)#此函数用于设置分位点
+tau_vector=function(q)
 {tau_ans=rep(0,q)
 for (i in 1:q)
 {
@@ -48,7 +56,6 @@ tau_ans
 #############################################
 Datagen=function(N,m,L,beta.turekh1,beta.turekh2,Sigma_b0,dis.err,tau)
 { 
-  #固定效应协方差阵参数
   R=diag(1,L,L) 
   for (i in 1:L)
   {
@@ -101,7 +108,6 @@ Datagen=function(N,m,L,beta.turekh1,beta.turekh2,Sigma_b0,dis.err,tau)
     b[,i]=mvrnorm(1,rep(0,p),sigmafang_b0)
     for (t in 1:m)
     { 
-      #X[i,t,1]=rbinom(1, size = 1, prob = 0.5)
       X[i,t,1:L]=matrix(mvrnorm(1,rep(0,L),Sigma=R),ncol=1)
       Y[i,t,]=beta.true%*%X[i,t,]+b[,i]+EPS[i,t,]     
     }                                           
@@ -112,15 +118,13 @@ Datagen=function(N,m,L,beta.turekh1,beta.turekh2,Sigma_b0,dis.err,tau)
 }
 
 #############################################################
-############################################################# 小循环，MCMC
+############################################################# 
 CBayesQR=function(Ykh1,Ykh2,X,tau,prior,init_value) 
 {
   theta1kkh1=(1-2*tau)/(tau*(1-tau))
   theta1kkh2=(1-2*tau)/(tau*(1-tau))
   theta2kkh1=2/(tau*(1-tau))
   theta2kkh2=2/(tau*(1-tau))
-  #init_value是各个参数的初值，是个list
-  #init_value=list (V=V_init,beta=beta_init,b=b_init,sigma=sigma_init,Sigma_b=Sigma_b_init,alpha=alpha_init)
   Vkh1=init_value$Vkh1
   Vkh2=init_value$Vkh2
   b=init_value$b
@@ -132,7 +136,6 @@ CBayesQR=function(Ykh1,Ykh2,X,tau,prior,init_value)
   betakh2=init_value$betakh2
   sigmakh1=init_value$sigmakh1
   sigmakh2=init_value$sigmakh2
-  #sigmafang_b=init_value$sigmafang_b
   Hkh1=init_value$Hkh1
   Hkh2=init_value$Hkh2
   lambdakh1=init_value$lambdakh1
@@ -140,7 +143,7 @@ CBayesQR=function(Ykh1,Ykh2,X,tau,prior,init_value)
   Sigma_b=init_value$Sigma_b
   
   
-  q=2#bi的维数
+  q=2
   ############################## undate betakh1
   beta_newkh1=matrix(0,L,1)
   for (h in 1:L)
@@ -186,7 +189,7 @@ CBayesQR=function(Ykh1,Ykh2,X,tau,prior,init_value)
   betakh2=beta_newkh2
   ############################### update sigmakh1
   C0kh1=3*n/2+prior$c0kh1
-  sigma_newkh1=sigmakh1#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  sigma_newkh1=sigmakh1
   for (k in 1:K)
   { rekh1=0
   for (i in 1:N)
@@ -206,7 +209,7 @@ CBayesQR=function(Ykh1,Ykh2,X,tau,prior,init_value)
   
   ############################### update sigmakh2
   C0kh2=3*n/2+prior$c0kh2
-  sigma_newkh2=sigmakh2#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  sigma_newkh2=sigmakh2
   for (k in 1:K)
   { rekh2=0
   for (i in 1:N)
@@ -353,7 +356,7 @@ CBayesQR=function(Ykh1,Ykh2,X,tau,prior,init_value)
   }
   Hkh2=H_newkh2
   
-  #############################更新完毕
+  #############################
   return(list(lambdakh1=lambdakh1,Hkh1=Hkh1,lambdakh2=lambdakh2,Hkh2=Hkh2,Vkh1=Vkh1,b=b,alphakh1=alphakh1,betakh1=betakh1,sigmakh1=sigmakh1,Sigma_b=Sigma_b,Vkh2=Vkh2,alphakh2=alphakh2,betakh2=betakh2,sigmakh2=sigmakh2))
 }
 
@@ -370,7 +373,7 @@ CBayesQRkh1=function(Ykh1,Ykh2,X,tau,prior,init_value)
   Hkh1=init_valuekh1$Hkh1
   lambdakh1=init_valuekh1$lambdakh1
   
-  q=1#bikh1和bikh2的维数
+  q=1
   ############################## undate betakh1
   beta_starkh1=matrix(0,L,1)
   X_matrixkh1=matrix(0,L,L)
@@ -386,7 +389,7 @@ CBayesQRkh1=function(Ykh1,Ykh2,X,tau,prior,init_value)
   }
   }
   B_starkh1=ginv(X_matrixkh1)
-  B_starkh1=(B_starkh1+t(B_starkh1))/2#保证矩阵对称,协方差矩阵必须对称
+  B_starkh1=(B_starkh1+t(B_starkh1))/2
   round(B_starkh1,6)
   beat_starkh1=B_starkh1%*%beta_starkh1
   beta_newkh1=matrix(rep(0,L),ncol=1)
@@ -399,7 +402,7 @@ CBayesQRkh1=function(Ykh1,Ykh2,X,tau,prior,init_value)
   
   ############################### update sigmakh1
   C0kh1=3*n/2+prior$c0kh1
-  sigma_newkh1=sigmakh1#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  sigma_newkh1=sigmakh1
   for (k in 1:K)
   { rekh1=0
   for (i in 1:N)
@@ -503,7 +506,7 @@ CBayesQRkh1=function(Ykh1,Ykh2,X,tau,prior,init_value)
   }
   Hkh1=H_newkh1
   
-  #############################更新完毕
+  #############################
   return(list(lambdakh1=lambdakh1,Hkh1=Hkh1,Vkh1=Vkh1,bkh1=bkh1,alphakh1=alphakh1,betakh1=betakh1,sigmakh1=sigmakh1,sigmafang_bkh1=sigmafang_bkh1))
 }
 
@@ -520,7 +523,7 @@ CBayesQRkh2=function(Ykh1,Ykh2,X,tau,prior,init_value)
   Hkh2=init_valuekh2$Hkh2
   lambdakh2=init_valuekh2$lambdakh2
   
-  q=1#bikh2和bikh2的维数
+  q=1
   ############################## undate betakh2
   beta_starkh2=matrix(0,L,1)
   X_matrixkh2=matrix(0,L,L)
@@ -536,7 +539,7 @@ CBayesQRkh2=function(Ykh1,Ykh2,X,tau,prior,init_value)
   }
   }
   B_starkh2=ginv(X_matrixkh2)
-  #############################保证矩阵对称,协方差矩阵必须对称
+  #############################
   B_starkh2=(B_starkh2+t(B_starkh2))/2
   round(B_starkh2,6)
   beat_starkh2=B_starkh2%*%beta_starkh2
@@ -550,7 +553,7 @@ CBayesQRkh2=function(Ykh1,Ykh2,X,tau,prior,init_value)
   
   ############################### update sigmakh2
   C0kh2=3*n/2+prior$c0kh2
-  sigma_newkh2=sigmakh2#不是为了赋值，是为了赋予向量的形式，再重新定义也行
+  sigma_newkh2=sigmakh2#
   for (k in 1:K)
   { rekh2=0
   for (i in 1:N)
@@ -654,36 +657,25 @@ CBayesQRkh2=function(Ykh1,Ykh2,X,tau,prior,init_value)
   }
   Hkh2=H_newkh2
   
-  #############################更新完毕
+  #############################
   return(list(lambdakh2=lambdakh2,Hkh2=Hkh2,Vkh2=Vkh2,bkh2=bkh2,alphakh2=alphakh2,betakh2=betakh2,sigmakh2=sigmakh2,sigmafang_bkh2=sigmafang_bkh2))
 }
-library(MASS)
-library(coda)
-library(mvtnorm)
-library(quantreg)
-library(MCMCpack)
-library(truncnorm)
-library(pscl)
-library(ghyp)
-library(MASS)
-library(coda)
-library(msm)
-library(pglm)
-library(geepack)
-library(mvtnorm)
-library(mlbench)
-library(tmvtnorm)
-library(quantreg)
-library(LaplacesDemon)
-library(MCMCpack)
-library(truncnorm)
-library(pscl)
-library(ghyp)
-library(gamlss.dist)
-library(Matrix)
-library(foreach)
-library(glmnet)
-tau=tau_vector(K)  #分位数
+K=3;S=100;p=2
+beta.turekh1=matrix(c(0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0), ncol=1)  
+beta.turekh2=matrix(c(0,0.8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0),ncol=1)
+L=length(beta.turekh1);dis.err="MN"
+sigmafang_b0=matrix(c(1,1,1,1),p,p)
+
+Length_chain=10000
+burn.in=4000
+step=1
+sample_size=6000
+rho=0
+N=15
+m=5 
+n=N*m
+
+tau=tau_vector(K)  
 #############################################################
 #                          prior                            #
 #############################################################
@@ -696,7 +688,7 @@ c0kh2=d0kh2=0.1
 mb=3
 Phi_b_joint=diag(rep(1,p))
 Phi_b=1
-#各取所需
+
 prior=list(alpha0kh1=alpha0kh1,alpha0_varkh1=alpha0_varkh1,mb=mb,c0kh1=c0kh1,d0kh1=d0kh1,Phi_b_joint=Phi_b_joint,alpha0kh2=alpha0kh2,alpha0_varkh2=alpha0_varkh2,c0kh2=c0kh2,d0kh2=d0kh2)
 priorkh1=list(alpha0kh1=alpha0kh1,alpha0_varkh1=alpha0_varkh1,mb=mb,c0kh1=c0kh1,d0kh1=d0kh1,Phi_b=Phi_b)
 priorkh2=list(alpha0kh2=alpha0kh2,alpha0_varkh2=alpha0_varkh2,mb=mb,c0kh2=c0kh2,d0kh2=d0kh2,Phi_b=Phi_b)
@@ -716,7 +708,7 @@ lambda_initkh2=rep(1,L)
 H_initkh1=rep(1,L)
 H_initkh2=rep(1,L)
 Sigma_b_init=diag(rep(1,p))
-
+sigmafang_b_init=diag(rep(1,p))
 V_initkh1=array(0,c(N,m,K))
 for (k in 1:K)
 { V_initkh1[,,k]=matrix(rEXP(N*m,sigma_initkh1[k]),N,m) }
@@ -726,7 +718,7 @@ for (k in 1:K)
 { V_initkh2[,,k]=matrix(rEXP(N*m,sigma_initkh2[k]),N,m) }
 b_init_joint=matrix(rnorm(p*N,0,1),p,N)
 b_init=matrix(rnorm(N,0,1),1,N)
-#各取所需
+
 init_value=list (lambdakh1=lambda_initkh1,Hkh1=H_initkh1,lambdakh2=lambda_initkh2,Hkh2=H_initkh2,Vkh1=V_initkh1,betakh1=beta_initkh1,b=b_init_joint,sigmakh1=sigma_initkh1,Sigma_b=Sigma_b_init,alphakh1=alpha_initkh1,Vkh2=V_initkh2,betakh2=beta_initkh2,sigmakh2=sigma_initkh2,alphakh2=alpha_initkh2)
 init_valuekh1=list (lambdakh1=lambda_initkh1,Hkh1=H_initkh1,Vkh1=V_initkh1,betakh1=beta_initkh1,bkh1=b_init,sigmakh1=sigma_initkh1,sigmafang_bkh1=sigmafang_b_init,alphakh1=alpha_initkh1)
 init_valuekh2=list (lambdakh2=lambda_initkh2,Hkh2=H_initkh2,Vkh2=V_initkh2,betakh2=beta_initkh2,bkh2=b_init,sigmakh2=sigma_initkh2,sigmafang_bkh2=sigmafang_b_init,alphakh2=alpha_initkh2)
@@ -789,16 +781,15 @@ Betalowsinglekh2=array(0,c(L,S))
 Betaupsingle=array(0,c(p,L,S))
 Betaupsinglekh1=array(0,c(L,S))
 Betaupsinglekh2=array(0,c(L,S))
-################################################################产生初值
-################################################################产生数据
-################################################################开始循环
+################################################################
+################################################################
+################################################################
 APMSE=matrix(0,S,1)
 APMSE_single=matrix(0,S,1)
 for (s in 1:S){
-  print(s)
   Dat=Datagen(N,m,L,beta.turekh1,beta.turekh2,Sigma_b0,dis.err,tau)
   for (k in 1:Length_chain)
-  {#print(k)
+  {
     ff=CBayesQR(Dat$Ykh1,Dat$Ykh2,Dat$X,tau,prior,init_value)
     Sigma_b_simu[,,s,k]=ff$Sigma_b
     b_simu[,,s,k]=ff$b
@@ -825,13 +816,8 @@ for (s in 1:S){
   {
     Sigma_b_simu1[,,s,j]=Sigma_b_simu0[,,s,1+step*(j-1)]
     b_simu1[,,s,j]=b_simu0[,,s,1+step*(j-1)]
-    
     cov_matrix <- Sigma_b_simu1[,,s,j]
-    
-    # 计算标准差向量
     std_dev <- sqrt(diag(cov_matrix))
-    
-    # 计算相关矩阵
     corr_matrix <- cov_matrix / outer(std_dev, std_dev)
     
     Sigma_b_simu2[,,s,j]=corr_matrix
@@ -955,7 +941,7 @@ for (s in 1:S)
 { num1=num1+length(setdiff(c(which(abs(khBetamean[,,s])>eps)),ind_zero_beta_single))
 num3=num3+length(setdiff(c(which(abs(khBetamean[,,s])>eps)),ind_nonzero_beta_single))
 }
-#setdiff(A,B):将A中在B的扔掉，剩下的A。也就是A-A∩B
+
 for (j in 1:2)
 { for (k in 1:L)
 { if (beta.true[j,k]!=0)
@@ -965,8 +951,8 @@ for (j in 1:2)
 }
 }
 
-Corr_beta_single=num1/S#把真值不是0的估计成超过阈值的每次bootstrap平均次数
-InCorr_beta_single=num3/S#把真值是0的估计成超过阈值的每次bootstrap平均次数
+Corr_beta_single=num1/S
+InCorr_beta_single=num3/S
 
 result_beta_single=list(NC_beta_single=Corr_beta_single,NIC_beta_single=InCorr_beta_single)
 
@@ -981,7 +967,6 @@ for (s in 1:S)
 { num1=num1+length(setdiff(c(which(abs(Betamean[,,s])>eps)),ind_zero_beta_joint))
 num3=num3+length(setdiff(c(which(abs(Betamean[,,s])>eps)),ind_nonzero_beta_joint))
 }
-#setdiff(A,B):将A中在B的扔掉，剩下的A。也就是A-A∩B
 for (j in 1:2)
 { for (k in 1:L)
 { if (beta.true[j,k]!=0)
@@ -991,28 +976,9 @@ for (j in 1:2)
 }
 }
 
-Corr_beta_joint=num1/S#把真值不是0的估计成超过阈值的每次bootstrap平均次数
-InCorr_beta_joint=num3/S#把真值是0的估计成超过阈值的每次bootstrap平均次数
+Corr_beta_joint=num1/S
+InCorr_beta_joint=num3/S
 result_beta_joint=list(NC_beta_joint=Corr_beta_joint,NIC_beta_joint=InCorr_beta_joint)
-#分量惩罚识别成功个数
-# X_betajoint=matrix(0,p,L)
-# for(i in 1:p){
-#   for (j in 1:L)
-#   { if (beta.true[i,j]!=0)
-#   { X_betajoint[i,j]=sum(as.numeric(abs(Betamean[i,j,])>eps))}
-#     else
-#     { X_betajoint[i]=sum(as.numeric(abs(Betamean[i,j,])<=eps))}
-#   }
-# }
-# X_betasingle=matrix(0,p,L)
-# for(i in 1:p){
-#   for (j in 1:L)
-#   { if (beta.true[i,j]!=0)
-#   { X_betasingle[i,j]=sum(as.numeric(abs(khBetamean[i,j,])>eps))}
-#     else
-#     { X_betasingle[i]=sum(as.numeric(abs(khBetamean[i,j,])<=eps))}
-#   }
-# }
 
 ##CI(1)
 beta_low_kh1_joint=matrix(0,S,L)
@@ -1080,10 +1046,9 @@ beta_var_kh1_single_mean=apply(beta_var_kh1_single,2,mean)
 beta_var_kh2_single_mean=apply(beta_var_kh2_single,2,mean)
 
 #
-#结果1：潘建新论文评价准则
 round(beta_var_kh1_single_mean/beta_var_kh1_joint_mean,3)
 round(beta_var_kh2_single_mean/beta_var_kh2_joint_mean,3)
-#结果2:bias Rmse CI
+#
 round(beta_Biaskh1_single,3)
 round(beta_Rmsekh1_single,3)
 round(beta_low_kh1_single_mean,3)
@@ -1101,6 +1066,6 @@ round(beta_Biaskh2_joint,3)
 round(beta_Rmsekh2_joint,3)
 round(beta_low_kh2_joint_mean,3)
 round(beta_up_kh2_joint_mean,3)
-#结果3：APMSE与惩罚识别率
+#
 round(MMAD_beta_single,3);round(Mstd_beta_single,3);result_beta_single
 round(MMAD_beta_joint,3);round(Mstd_beta_joint,3);result_beta_joint
